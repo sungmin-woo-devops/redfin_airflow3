@@ -1,0 +1,15 @@
+feeds:
+  - name: OpenAI Blog
+    url: https://openai.com/blog/rss
+  - name: Google AI Blog
+    url: https://ai.googleblog.com/feeds/posts/default
+  - name: NVIDIA Technical Blog
+    url: https://developer.nvidia.com/blog/feed/
+  - name: Anthropic
+    url: https://www.anthropic.com/news/rss
+per_feed_limit: 200
+http:
+  timeout: 20
+  retries: 3
+  backoff: 0.5
+  user_agent: "RedFinRSSBot/1.0 (+https://example.com/contact)"

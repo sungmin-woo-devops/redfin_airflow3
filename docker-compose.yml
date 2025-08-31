@@ -1,0 +1,110 @@
+---
+x-airflow-common:
+  &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: redfin/airflow3:local
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    &airflow-env
+    TZ: ${TZ}
+    AIRFLOW__CORE__EXECUTOR: ${AIRFLOW__CORE__EXECUTOR}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION}
+    AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
+    AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR: ${AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR}
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW__API__SECRET_KEY}
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    _AIRFLOW_WWW_USER_USERNAME: admin
+    _AIRFLOW_WWW_USER_PASSWORD: admin
+    # 데이터베이스 연결(기본 Postgres)
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+  user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-0}"
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./plugins:/opt/airflow/plugins
+    - ./logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./data:/opt/airflow/data
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ${COMPOSE_PROJECT_NAME}-postgres
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: ${TZ}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  airflow-init:
+    <<: *airflow-common
+    restart: "no"
+    container_name: ${COMPOSE_PROJECT_NAME}-airflow-init
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        export PATH="$PATH:/home/airflow/.local/bin"
+        airflow db migrate
+        echo "Airflow DB migrated and admin user created."
+    environment:
+      <<: *airflow-env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./config:/opt/airflow/config
+    user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-0}"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: ${COMPOSE_PROJECT_NAME}-airflow-webserver
+    command: ["airflow", "api-server"]
+    environment:
+      <<: *airflow-env
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD}
+      MONGO_URI: mongodb://redfin:Redfin7620%21@mongodb:27017/redfin?authSource=admin
+      RSS_FEEDS_YAML: /opt/airflow/dags/config/rss_feeds.yaml
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
+    ports:
+      - "${AIRFLOW_WEB_PORT}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: ${COMPOSE_PROJECT_NAME}-airflow-scheduler
+    command: scheduler
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: ${COMPOSE_PROJECT_NAME}-airflow-dag-processor
+    command: dag-processor
+
+volumes:
+  pgdata:
